@@ -26,10 +26,9 @@ def test_th_conv():
     weight = torch.tensor(np_weight)
     bias = torch.tensor(np_bias)
     conv = torch.nn.Conv2d(C, D, (kh, kw), bias=True)
-    conv.weight[:] = weight
-    conv.bias[:] = bias
+    conv.weight.data = weight
+    conv.bias.data = bias
     return conv(data).detach().numpy()
-    
 
 out1 = test_mx_conv()
 out2 = test_th_conv()

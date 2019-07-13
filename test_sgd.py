@@ -3,8 +3,8 @@ import mxnet as mx
 import torch
 print(mx, torch)
 
-N, C = 1, 1
-D = 1
+N, C = 2, 3
+D = 4
 dtype = np.float32
 
 np.random.seed(39)
@@ -23,45 +23,34 @@ def test_np():
     bias = np_bias.copy()
     target = np_target.copy()
     state_weight = None
-    state_bias = None 
+    state_bias = None
     losses = []
     datas = []
     grads = []
     def fc(data):
-        return np.dot(data, weight.T) + bias 
+        return np.dot(data, weight.T) + bias
     for e in range(epoch):
         out = fc(data)
-        loss = ((out - target) ** 2).sum() 
+        loss = ((out - target) ** 2).sum()
         dy = 2 * (out - target)
-        grad_weight = np.dot(dy.T, data) 
+        grad_weight = np.dot(dy.T, data)
         grad_bias = dy.sum(0).T
-        if False:
-            if state_weight is None:
-                state_weight = np.zeros_like(weight)
-                state_bias = np.zeros_like(bias)
-            rescale_grad_weight = lr * (grad_weight + wd * weight)
-            rescale_grad_bias = lr * (grad_bias + wd * bias)
-            state_weight = momentum * state_weight + rescale_grad_weight
-            state_bias = momentum * state_bias + rescale_grad_bias
-            print(state_weight, state_bias)
-            weight = weight - state_weight 
-            bias = bias - state_bias 
-        else:
-            # grad + weight * wd
-            grad_weight = grad_weight + wd * weight
-            grad_bias = grad_bias + wd * bias 
-            if state_weight is None:
-                state_weight = grad_weight.copy()
-                state_bias = grad_bias.copy()
-            else:
-                state_weight = momentum * state_weight + grad_weight
-                state_bias = momentum * state_bias + grad_bias
-            print(lr*state_weight, lr*state_bias)
-            weight = weight - lr * state_weight 
-            bias = bias - lr * state_bias 
-        losses.append(loss)
+
+        if state_weight is None:
+            state_weight = np.zeros_like(weight)
+            state_bias = np.zeros_like(bias)
+        rescale_grad_weight = lr * (grad_weight + wd * weight)
+        rescale_grad_bias = lr * (grad_bias + wd * bias)
+        state_weight = momentum * state_weight + rescale_grad_weight
+        state_bias = momentum * state_bias + rescale_grad_bias
+
         datas.append((weight, bias))
         grads.append((grad_weight, grad_bias))
+        losses.append(loss)
+
+        # update weight
+        weight = weight - state_weight
+        bias = bias - state_bias
     return dict(losses=losses, datas=datas, grads=grads)
 
 def test_mx():
@@ -90,10 +79,10 @@ def test_mx():
         with mx.autograd.record():
             loss = (fc(mx_data) - mx_target).square().sum()
         loss.backward()
-        trainer.step(N)
-        losses.append(loss.asnumpy())
         datas.append((fc.weight.data().asnumpy(), fc.bias.data().asnumpy()))
         grads.append((fc.weight.data().grad.asnumpy(), fc.bias.data().grad.asnumpy()))
+        trainer.step(1)
+        losses.append(loss.asnumpy())
     return dict(losses=losses, datas=datas, grads=grads)
 
 def test_th():
@@ -117,10 +106,10 @@ def test_th():
         optimizer.zero_grad()
         loss = ((fc(th_data) - th_target) ** 2).sum()
         loss.backward()
-        optimizer.step()
-        losses.append(loss.detach().numpy().copy())
         datas.append((fc.weight.detach().numpy().copy(), fc.bias.detach().numpy().copy()))
         grads.append((fc.weight.grad.numpy().copy(), fc.bias.grad.numpy().copy()))
+        optimizer.step()
+        losses.append(loss.detach().numpy().copy())
     return dict(losses=losses, datas=datas, grads=grads)
     
 def test_result(xs, ys, prefix=None):
@@ -145,7 +134,7 @@ def test_result(xs, ys, prefix=None):
 out0 = test_np()
 out1 = test_mx()
 out2 = test_th()
-#test_result(out0, out1)
+test_result(out0, out1)
 test_result(out0, out2)
 #test_result(out1, out2)
 print("Okay")

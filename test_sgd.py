@@ -3,6 +3,23 @@ import mxnet as mx
 import torch
 print(mx, torch)
 
+old_step = mx.gluon.Trainer.step
+def Trainer_step(self, batch_size, ignore_stale_grad=False):
+    for updater in self._updaters:
+        if len(updater.states) == 0:
+            continue
+        old_lr_record = getattr(self, '_lr_record', None)
+        self._lr_record = dict([(k, updater.optimizer._get_lr(k)) for k in updater.states.keys()])
+        if old_lr_record is not None:
+            for k in old_lr_record.keys():
+                old_lr = old_lr_record[k]
+                new_lr = self._lr_record[k]
+                if old_lr != new_lr:
+                    scale = new_lr / old_lr
+                    updater.states[k] *= scale
+    old_step(self, batch_size, ignore_stale_grad)
+mx.gluon.Trainer.step = Trainer_step
+
 N, C = 2, 3
 D = 4
 dtype = np.float32
@@ -12,8 +29,9 @@ np_data = np.random.normal(size=(N,C)).astype(dtype)
 np_weight = np.random.normal(size=(D, C)).astype(dtype)
 np_bias = np.random.normal(size=(D, )).astype(dtype)
 np_target = np.random.normal(size=(N, D)).astype(dtype)
-epoch = 3
-lr = 1e-3
+epoch = 10
+base_lr = 1e-3
+lr_changed_epoch = epoch - 3
 wd = 1e-2
 momentum = 0.9
 
@@ -27,9 +45,12 @@ def test_np():
     losses = []
     datas = []
     grads = []
+    lr = base_lr
     def fc(data):
         return np.dot(data, weight.T) + bias
     for e in range(epoch):
+        if e == lr_changed_epoch:
+            lr *= 1e-1
         out = fc(data)
         loss = ((out - target) ** 2).sum()
         dy = 2 * (out - target)
@@ -39,8 +60,14 @@ def test_np():
         if state_weight is None:
             state_weight = np.zeros_like(weight)
             state_bias = np.zeros_like(bias)
+        '''
         rescale_grad_weight = lr * (grad_weight + wd * weight)
         rescale_grad_bias = lr * (grad_bias + wd * bias)
+        state_weight = momentum * state_weight + rescale_grad_weight
+        state_bias = momentum * state_bias + rescale_grad_bias
+        '''
+        rescale_grad_weight = grad_weight + wd * weight
+        rescale_grad_bias = grad_bias + wd * bias
         state_weight = momentum * state_weight + rescale_grad_weight
         state_bias = momentum * state_bias + rescale_grad_bias
 
@@ -49,8 +76,28 @@ def test_np():
         losses.append(loss)
 
         # update weight
+        '''
         weight = weight - state_weight
         bias = bias - state_bias
+        '''
+        weight = weight - lr * state_weight
+        bias = bias - lr * state_bias
+
+        '''
+        # PyTorch
+        # grad + weight * wd
+        grad_weight = grad_weight + wd * weight
+        grad_bias = grad_bias + wd * bias
+        if state_weight is None:
+            state_weight = grad_weight.copy()
+            state_bias = grad_bias.copy()
+        else:
+            state_weight = momentum * state_weight + grad_weight
+            state_bias = momentum * state_bias + grad_bias
+        print(lr*state_weight, lr*state_bias)
+        weight = weight - lr * state_weight
+        bias = bias - lr * state_bias
+        '''
     return dict(losses=losses, datas=datas, grads=grads)
 
 def test_mx():
@@ -66,6 +113,7 @@ def test_mx():
     losses = []
     datas = []
     grads = []
+    lr = base_lr
     trainer = mx.gluon.Trainer(
         fc.collect_params(),
         'sgd',
@@ -76,6 +124,9 @@ def test_mx():
         )
     )
     for e in range(epoch):
+        if e == lr_changed_epoch:
+            lr *= 1e-1
+        trainer.set_learning_rate(lr)
         with mx.autograd.record():
             loss = (fc(mx_data) - mx_target).square().sum()
         loss.backward()
@@ -93,6 +144,7 @@ def test_th():
     fc = torch.nn.Linear(C, D, bias=True)
     fc.weight.data = th_weight
     fc.bias.data = th_bias
+    lr = base_lr
     optimizer = torch.optim.SGD(
         fc.parameters(),
         lr=lr,
@@ -103,6 +155,10 @@ def test_th():
     datas = []
     grads = []
     for e in range(epoch):
+        if e == lr_changed_epoch:
+            lr *= 1e-1
+            for g in optimizer.param_groups:
+                g['lr'] = lr
         optimizer.zero_grad()
         loss = ((fc(th_data) - th_target) ** 2).sum()
         loss.backward()

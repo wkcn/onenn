@@ -18,7 +18,7 @@ def Trainer_step(self, batch_size, ignore_stale_grad=False):
                     scale = new_lr / old_lr
                     updater.states[k] *= scale
     old_step(self, batch_size, ignore_stale_grad)
-mx.gluon.Trainer.step = Trainer_step
+# mx.gluon.Trainer.step = Trainer_step
 
 N, C = 2, 3
 D = 4
@@ -29,11 +29,12 @@ np_data = np.random.normal(size=(N,C)).astype(dtype)
 np_weight = np.random.normal(size=(D, C)).astype(dtype)
 np_bias = np.random.normal(size=(D, )).astype(dtype)
 np_target = np.random.normal(size=(N, D)).astype(dtype)
-epoch = 10
+epoch = 20
 base_lr = 1e-3
 lr_changed_epoch = epoch - 3
 wd = 1e-2
 momentum = 0.9
+
 
 def test_np():
     data = np_data.copy()
@@ -100,6 +101,31 @@ def test_np():
         '''
     return dict(losses=losses, datas=datas, grads=grads)
 
+
+@mx.optimizer.Optimizer.register
+class MyMXSGDOptimizer(mx.optimizer.Optimizer):
+    def __init__(self, momentum=0.0, **kwargs):
+        for k in kwargs.keys():
+            assert k in ['param_dict', 'learning_rate', 'wd'], Exception('Not supported {}'.format(k))
+        super(MyMXSGDOptimizer, self).__init__(**kwargs)
+        self.momentum = momentum
+        self.states = dict()
+
+    def update(self, index, weight, grad, state):
+        self._update_count(index)
+        lr = self._get_lr(index)
+        wd = self._get_wd(index)
+
+        grad += wd * weight
+        if index not in self.states:
+            state = self.states[index] = grad.copy()
+        else:
+            state = self.states[index]
+            state *= self.momentum
+            state += grad
+        weight -= lr * state
+
+
 def test_mx():
     mx_data = mx.nd.array(np_data)
     mx_weight = mx.nd.array(np_weight)
@@ -116,7 +142,7 @@ def test_mx():
     lr = base_lr
     trainer = mx.gluon.Trainer(
         fc.collect_params(),
-        'sgd',
+        'MyMXSGDOptimizer',
         dict(
             learning_rate=lr,
             wd=wd,
@@ -192,5 +218,5 @@ out1 = test_mx()
 out2 = test_th()
 test_result(out0, out1)
 test_result(out0, out2)
-#test_result(out1, out2)
+test_result(out1, out2)
 print("Okay")
